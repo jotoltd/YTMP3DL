@@ -47,11 +47,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: YT-MP3-Downloader-Windows
-          path: dist\YT-MP3-Downloader.exe
+          path: dist/YT-MP3-Downloader.exe
 
-      - name: Publish GitHub Release
+      - name: Upload EXE to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist\YT-MP3-Downloader.exe
-          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: gh release upload "${{ github.ref_name }}" dist/YT-MP3-Downloader.exe --clobber
