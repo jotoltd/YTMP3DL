@@ -41,7 +41,6 @@ jobs:
             --name "YT-MP3-Downloader" ^
             --add-binary "ffmpeg_bin\ffmpeg.exe;." ^
             --add-binary "ffmpeg_bin\ffprobe.exe;." ^
-            --icon NONE ^
             main.py
 
       - name: Upload build artifact
