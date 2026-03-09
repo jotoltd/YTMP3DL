@@ -1,0 +1,12 @@
+venv/
+dist/
+build/
+__pycache__/
+*.spec
+*.pyc
+ffmpeg/
+ffmpeg_bin/
+ffmpeg_temp/
+ffmpeg_dl.zip
+ffmpeg_build.zip
+.DS_Store

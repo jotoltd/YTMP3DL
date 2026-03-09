@@ -1,0 +1,58 @@
+name: Build Windows EXE
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: pip install pyinstaller yt-dlp
+
+      - name: Download ffmpeg
+        shell: pwsh
+        run: |
+          curl -L -o ffmpeg.zip "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_temp -Force
+          New-Item -ItemType Directory -Path "ffmpeg_bin" -Force
+          Get-ChildItem -Recurse -Path "ffmpeg_temp" -Filter "ffmpeg.exe"  | Select-Object -First 1 | Copy-Item -Destination "ffmpeg_bin\ffmpeg.exe"
+          Get-ChildItem -Recurse -Path "ffmpeg_temp" -Filter "ffprobe.exe" | Select-Object -First 1 | Copy-Item -Destination "ffmpeg_bin\ffprobe.exe"
+
+      - name: Build EXE with PyInstaller
+        shell: cmd
+        run: |
+          pyinstaller --onefile --windowed ^
+            --name "YT-MP3-Downloader" ^
+            --add-binary "ffmpeg_bin\ffmpeg.exe;." ^
+            --add-binary "ffmpeg_bin\ffprobe.exe;." ^
+            --icon NONE ^
+            main.py
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: YT-MP3-Downloader-Windows
+          path: dist\YT-MP3-Downloader.exe
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist\YT-MP3-Downloader.exe
+          generate_release_notes: true
