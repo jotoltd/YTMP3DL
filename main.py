@@ -13,7 +13,7 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime
 
-VERSION = "1.0.0"
+VERSION = "1.0.4"
 GITHUB_REPO = "jotoltd/YTMP3DL"
 
 # Resolve ffmpeg location: PyInstaller bundle OR local ffmpeg\bin folder
@@ -73,6 +73,7 @@ class YouTubeMP3Downloader(tk.Tk):
         self._build_ui()
         self._check_ffmpeg()
         threading.Thread(target=self._check_for_updates, daemon=True).start()
+        self.after(300, lambda: self._update_status("Checking for updates..."))
 
     def _check_ffmpeg(self):
         try:
@@ -138,6 +139,23 @@ class YouTubeMP3Downloader(tk.Tk):
             fg=TEXT_SECONDARY,
             bg=PANEL_BG,
         ).pack(side=tk.LEFT, pady=(10, 0))
+
+        self._update_check_btn = tk.Button(
+            header,
+            text="⟳  Check for Updates",
+            command=self._manual_update_check,
+            font=("Helvetica", 9),
+            bg=PANEL_BG,
+            fg=TEXT_SECONDARY,
+            activebackground=CARD_BG,
+            activeforeground=TEXT_PRIMARY,
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=10,
+            pady=4,
+            bd=0,
+        )
+        self._update_check_btn.place(relx=1.0, rely=0.5, anchor="e", x=-12)
 
     def _build_input_section(self):
         frame = tk.Frame(self, bg=DARK_BG, padx=20, pady=14)
@@ -358,7 +376,15 @@ class YouTubeMP3Downloader(tk.Tk):
             command=lambda: self._update_frame.pack_forget(),
         ).pack(side=tk.RIGHT, padx=8)
 
-    def _check_for_updates(self):
+    def _manual_update_check(self):
+        self._set_update_btn("⟳  Checking...", TEXT_SECONDARY, state=tk.DISABLED)
+        self._update_status("Checking for updates...")
+        threading.Thread(target=self._check_for_updates, args=(True,), daemon=True).start()
+
+    def _set_update_btn(self, text: str, color: str, state=tk.NORMAL):
+        self.after(0, lambda: self._update_check_btn.config(text=text, fg=color, state=state))
+
+    def _check_for_updates(self, manual: bool = False):
         if "YOUR_USERNAME" in GITHUB_REPO:
             return
         try:
@@ -368,6 +394,7 @@ class YouTubeMP3Downloader(tk.Tk):
                 data = json.loads(resp.read().decode())
             latest_tag = data.get("tag_name", "").lstrip("v")
             if not latest_tag:
+                self._set_update_btn("⟳  Check for Updates", TEXT_SECONDARY)
                 return
             if self._version_tuple(latest_tag) > self._version_tuple(VERSION):
                 assets = data.get("assets", [])
@@ -376,9 +403,23 @@ class YouTubeMP3Downloader(tk.Tk):
                     None,
                 )
                 self._update_available = {"version": latest_tag, "url": dl_url}
+                self._set_update_btn(f"⬆  Update to v{latest_tag}", "#ffca28")
                 self.after(0, lambda: self._show_update_banner(latest_tag))
+            else:
+                self._set_update_btn("✓  Up to date", SUCCESS)
+                self._update_status(f"v{VERSION} is up to date.")
+                if manual:
+                    self.after(0, lambda: messagebox.showinfo(
+                        "Up to Date", f"You're running the latest version (v{VERSION})."
+                    ))
+                self.after(4000, lambda: self._set_update_btn("⟳  Check for Updates", TEXT_SECONDARY))
         except Exception:
-            pass
+            self._set_update_btn("⟳  Check for Updates", TEXT_SECONDARY)
+            if manual:
+                self.after(0, lambda: messagebox.showwarning(
+                    "Update Check Failed", "Could not reach GitHub. Check your internet connection."
+                ))
+            self._update_status("Ready")
 
     @staticmethod
     def _version_tuple(v: str):
