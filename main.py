@@ -15,7 +15,7 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime
 
-VERSION = "1.1.6"
+VERSION = "1.1.7"
 GITHUB_REPO = "jotoltd/YTMP3DL"
 
 # Resolve ffmpeg location: PyInstaller bundle OR local ffmpeg\bin folder
@@ -123,6 +123,78 @@ THEMES = {
         "entry_bg":        "#2d1120",
         "progress_trough": "#12070e",
     },
+    "neon": {
+        "bg":              "#090909",
+        "panel":           "#101010",
+        "card":            "#1a1a1a",
+        "text":            "#e0ffe0",
+        "text_dim":        "#55bb55",
+        "success":         "#00ff88",
+        "warning":         "#ffaa00",
+        "log_bg":          "#050505",
+        "entry_bg":        "#101010",
+        "progress_trough": "#050505",
+    },
+    "dracula": {
+        "bg":              "#282a36",
+        "panel":           "#1e1f29",
+        "card":            "#44475a",
+        "text":            "#f8f8f2",
+        "text_dim":        "#6272a4",
+        "success":         "#50fa7b",
+        "warning":         "#ffb86c",
+        "log_bg":          "#191a23",
+        "entry_bg":        "#1e1f29",
+        "progress_trough": "#191a23",
+    },
+    "nord": {
+        "bg":              "#2e3440",
+        "panel":           "#3b4252",
+        "card":            "#434c5e",
+        "text":            "#eceff4",
+        "text_dim":        "#9099aa",
+        "success":         "#a3be8c",
+        "warning":         "#ebcb8b",
+        "log_bg":          "#242933",
+        "entry_bg":        "#3b4252",
+        "progress_trough": "#242933",
+    },
+    "slate": {
+        "bg":              "#1e2126",
+        "panel":           "#282c34",
+        "card":            "#3a3f4b",
+        "text":            "#abb2bf",
+        "text_dim":        "#5c6370",
+        "success":         "#98c379",
+        "warning":         "#e5c07b",
+        "log_bg":          "#171a1f",
+        "entry_bg":        "#282c34",
+        "progress_trough": "#171a1f",
+    },
+    "amber": {
+        "bg":              "#1a1200",
+        "panel":           "#2a1e00",
+        "card":            "#3d2c00",
+        "text":            "#ffe599",
+        "text_dim":        "#cc9933",
+        "success":         "#ffcc00",
+        "warning":         "#ff6600",
+        "log_bg":          "#120d00",
+        "entry_bg":        "#2a1e00",
+        "progress_trough": "#120d00",
+    },
+    "coffee": {
+        "bg":              "#1a0f07",
+        "panel":           "#2b1a0a",
+        "card":            "#3d2610",
+        "text":            "#f0d8b0",
+        "text_dim":        "#a07840",
+        "success":         "#c8a46e",
+        "warning":         "#ff8c42",
+        "log_bg":          "#120b05",
+        "entry_bg":        "#2b1a0a",
+        "progress_trough": "#120b05",
+    },
 }
 
 _PREFS_FILE = Path.home() / ".ytmp3dl_prefs.json"
@@ -223,6 +295,12 @@ _THEME_LABELS = {
     "forest":   "Forest",
     "midnight": "Midnight",
     "rose":     "Rose",
+    "neon":     "Neon",
+    "dracula":  "Dracula",
+    "nord":     "Nord",
+    "slate":    "Slate",
+    "amber":    "Amber",
+    "coffee":   "Coffee",
 }
 
 
