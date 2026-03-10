@@ -15,7 +15,7 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime
 
-VERSION = "1.1.8"
+VERSION = "1.1.9"
 GITHUB_REPO = "jotoltd/YTMP3DL"
 
 # Resolve ffmpeg location: PyInstaller bundle OR local ffmpeg\bin folder
@@ -494,10 +494,13 @@ class YouTubeMP3Downloader(tk.Tk):
         self.minsize(700, 560)
         self.configure(bg=DARK_BG)
 
-        self._theme_name = self._load_theme_pref()
+        self._prefs = self._load_prefs()
+        self._theme_name = self._prefs.get("theme", "dark") if self._prefs.get("theme", "dark") in THEMES else "dark"
         self._tw: dict = {}  # widget registry for theme updates
 
-        self.download_path = tk.StringVar(value=str(Path.home() / "Downloads"))
+        self.download_path = tk.StringVar(
+            value=self._prefs.get("download_path", str(Path.home() / "Downloads"))
+        )
         self.url_var = tk.StringVar()
         self.queue: list[DownloadItem] = []
         self.is_downloading = False
@@ -1093,18 +1096,28 @@ class YouTubeMP3Downloader(tk.Tk):
     def _do_update_restart(self, current_exe: str):
         """Run on the main Tk thread: hide window, launch new exe, exit."""
         try:
-            self.withdraw()   # Hide old window immediately
-            self.update()     # Flush Tk so the hide takes effect
+            self.withdraw()
+            self.update()
         except Exception:
             pass
-        subprocess.Popen(
-            [current_exe],
-            creationflags=(
-                subprocess.DETACHED_PROCESS
-                | subprocess.CREATE_NEW_PROCESS_GROUP
-            ),
-            close_fds=True,
-        )
+        try:
+            subprocess.Popen(
+                [current_exe],
+                creationflags=(
+                    subprocess.DETACHED_PROCESS
+                    | subprocess.CREATE_NEW_PROCESS_GROUP
+                ),
+                close_fds=True,
+            )
+        except Exception as e:
+            # Launch failed — restore window and report
+            try:
+                self.deiconify()
+            except Exception:
+                pass
+            self._log(f"Update launch failed: {e}")
+            self.after(0, lambda: self._update_btn.config(state=tk.NORMAL, text="⬇  Install Update"))
+            return
         os._exit(0)
 
     def _show_entry_context_menu(self, event):
@@ -1129,6 +1142,7 @@ class YouTubeMP3Downloader(tk.Tk):
         path = filedialog.askdirectory(initialdir=self.download_path.get())
         if path:
             self.download_path.set(path)
+            self._save_prefs()
 
     def _is_playlist_url(self, url: str) -> bool:
         return "list=" in url and ("youtube.com" in url or "youtu.be" in url)
@@ -1294,7 +1308,7 @@ class YouTubeMP3Downloader(tk.Tk):
     def _start_downloads(self):
         if self.is_downloading:
             return
-        pending = [item for item in self.queue if item.status in ("Queued", "Error")]
+        pending = [item for item in self.queue if item.status in ("Queued", "Error", "⬛ Stopped")]
         if not pending:
             messagebox.showinfo("Nothing to download", "No pending items in the queue.")
             return
@@ -1502,18 +1516,23 @@ class YouTubeMP3Downloader(tk.Tk):
 
     # ── Theming ──────────────────────────────────────────────────────────
 
-    def _load_theme_pref(self) -> str:
+    def _load_prefs(self) -> dict:
         try:
-            name = json.loads(_PREFS_FILE.read_text()).get("theme", "dark")
-            return name if name in THEMES else "dark"
+            return json.loads(_PREFS_FILE.read_text())
         except Exception:
-            return "dark"
+            return {}
 
-    def _save_theme_pref(self):
+    def _save_prefs(self):
         try:
-            _PREFS_FILE.write_text(json.dumps({"theme": self._theme_name}))
+            data = self._load_prefs()
+            data["theme"] = self._theme_name
+            data["download_path"] = self.download_path.get()
+            _PREFS_FILE.write_text(json.dumps(data))
         except Exception:
             pass
+
+    def _save_theme_pref(self):
+        self._save_prefs()
 
     def _open_theme_picker(self):
         ThemePickerDialog(self)
