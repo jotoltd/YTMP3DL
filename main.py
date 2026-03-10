@@ -8,12 +8,13 @@ import json
 import re
 import tempfile
 import shutil
+import ctypes
 import urllib.request
 import urllib.error
 from pathlib import Path
 from datetime import datetime
 
-VERSION = "1.0.9"
+VERSION = "1.1.0"
 GITHUB_REPO = "jotoltd/YTMP3DL"
 
 # Resolve ffmpeg location: PyInstaller bundle OR local ffmpeg\bin folder
@@ -86,6 +87,73 @@ class DownloadItem:
         self.progress = progress
         self.error = None
         self._file_path = None
+
+
+class WindowsAudioPlayer:
+    """MP3 playback via Windows MCI (winmm). Zero extra dependencies."""
+    _ALIAS = "ytmp3dl_player"
+
+    def __init__(self):
+        self._mci = ctypes.windll.winmm
+        self._open = False
+
+    def _send(self, cmd: str) -> int:
+        return self._mci.mciSendStringW(cmd, None, 0, 0)
+
+    def _query(self, cmd: str) -> str:
+        buf = ctypes.create_unicode_buffer(256)
+        self._mci.mciSendStringW(cmd, buf, 256, 0)
+        return buf.value.strip()
+
+    def load(self, path: str) -> bool:
+        self.close()
+        r = self._send(f'open "{path}" alias {self._ALIAS}')
+        self._open = (r == 0)
+        return self._open
+
+    def play(self):
+        if self._open:
+            self._send(f'play {self._ALIAS}')
+
+    def pause(self):
+        if self._open:
+            self._send(f'pause {self._ALIAS}')
+
+    def resume(self):
+        if self._open:
+            self._send(f'resume {self._ALIAS}')
+
+    def stop(self):
+        if self._open:
+            self._send(f'stop {self._ALIAS}')
+
+    def close(self):
+        if self._open:
+            self._send(f'close {self._ALIAS}')
+            self._open = False
+
+    def seek(self, ms: int):
+        if self._open:
+            self._send(f'seek {self._ALIAS} to {ms}')
+            self._send(f'play {self._ALIAS}')
+
+    def get_position_ms(self) -> int:
+        try:
+            return int(self._query(f'status {self._ALIAS} position'))
+        except (ValueError, OSError):
+            return 0
+
+    def get_length_ms(self) -> int:
+        try:
+            return int(self._query(f'status {self._ALIAS} length'))
+        except (ValueError, OSError):
+            return 0
+
+    def mode(self) -> str:
+        return self._query(f'status {self._ALIAS} mode')
+
+    def set_volume(self, vol: int):  # 0-1000
+        self._send(f'setaudio {self._ALIAS} volume to {vol}')
 
 
 class PlaylistSelectDialog(tk.Toplevel):
@@ -207,8 +275,13 @@ class YouTubeMP3Downloader(tk.Tk):
         self._stop_flag = threading.Event()
         self._active_thread = None
         self._update_available = None
+        self._audio = None
+        self._player_paused = False
+        self._player_duration_ms = 0
+        self._player_update_id = None
 
         self._build_ui()
+        self._init_audio()
         self._apply_theme()
         self._check_ffmpeg()
         threading.Thread(target=self._check_for_updates, daemon=True).start()
@@ -249,7 +322,92 @@ class YouTubeMP3Downloader(tk.Tk):
         self._build_input_section()
         self._build_queue_section()
         self._build_log_section()
+        self._build_audio_player()
         self._build_status_bar()
+
+    def _init_audio(self):
+        if sys.platform == "win32":
+            try:
+                self._audio = WindowsAudioPlayer()
+            except Exception:
+                self._audio = None
+
+    def _build_audio_player(self):
+        self._player_frame = tk.Frame(self, bg=PANEL_BG, pady=6, padx=10)
+        self._tw["player_frame"] = self._player_frame
+
+        self._play_pause_btn = tk.Button(
+            self._player_frame, text="⏸", font=("Helvetica", 15), width=2,
+            bg=PANEL_BG, fg=ACCENT,
+            activebackground=CARD_BG, activeforeground=ACCENT,
+            relief=tk.FLAT, cursor="hand2", bd=0,
+            command=self._player_toggle_pause,
+        )
+        self._play_pause_btn.pack(side=tk.LEFT, padx=(0, 2))
+
+        stop_btn = tk.Button(
+            self._player_frame, text="⏹", font=("Helvetica", 13), width=2,
+            bg=PANEL_BG, fg=TEXT_SECONDARY,
+            activebackground=CARD_BG,
+            relief=tk.FLAT, cursor="hand2", bd=0,
+            command=self._player_stop,
+        )
+        stop_btn.pack(side=tk.LEFT, padx=(0, 10))
+        self._tw["player_stop_btn"] = stop_btn
+
+        self._player_title_var = tk.StringVar(value="")
+        title_lbl = tk.Label(
+            self._player_frame, textvariable=self._player_title_var,
+            font=("Helvetica", 10, "bold"), fg=TEXT_PRIMARY, bg=PANEL_BG,
+            width=30, anchor="w",
+        )
+        title_lbl.pack(side=tk.LEFT)
+        self._tw["player_title"] = title_lbl
+
+        self._player_time_var = tk.StringVar(value="0:00 / 0:00")
+        time_lbl = tk.Label(
+            self._player_frame, textvariable=self._player_time_var,
+            font=("Helvetica", 9), fg=TEXT_SECONDARY, bg=PANEL_BG, width=13,
+        )
+        time_lbl.pack(side=tk.LEFT, padx=(4, 6))
+        self._tw["player_time"] = time_lbl
+
+        self._player_canvas = tk.Canvas(
+            self._player_frame, height=8, bg=PANEL_BG,
+            highlightthickness=0, cursor="hand2",
+        )
+        self._player_canvas.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+        self._player_canvas.bind("<Button-1>", self._player_seek_click)
+        self._tw["player_canvas"] = self._player_canvas
+
+        vol_lbl = tk.Label(
+            self._player_frame, text="🔊", font=("Helvetica", 10),
+            bg=PANEL_BG, fg=TEXT_SECONDARY,
+        )
+        vol_lbl.pack(side=tk.LEFT)
+        self._tw["player_vol_lbl"] = vol_lbl
+
+        self._volume_var = tk.IntVar(value=80)
+        self._vol_slider = tk.Scale(
+            self._player_frame, from_=0, to=100,
+            orient=tk.HORIZONTAL, variable=self._volume_var,
+            command=self._player_set_volume,
+            length=75, showvalue=False,
+            bg=PANEL_BG, fg=TEXT_SECONDARY,
+            troughcolor=CARD_BG, activebackground=ACCENT,
+            highlightthickness=0, bd=0, sliderlength=12,
+        )
+        self._vol_slider.pack(side=tk.LEFT, padx=(2, 8))
+        self._tw["player_vol_slider"] = self._vol_slider
+
+        close_btn = tk.Button(
+            self._player_frame, text="✕",
+            font=("Helvetica", 9), bg=PANEL_BG, fg=TEXT_SECONDARY,
+            activebackground=CARD_BG, relief=tk.FLAT, cursor="hand2",
+            command=self._player_stop,
+        )
+        close_btn.pack(side=tk.LEFT)
+        self._tw["player_close_btn"] = close_btn
 
     def _build_header(self):
         header = tk.Frame(self, bg=PANEL_BG, height=70)
@@ -1057,12 +1215,96 @@ class YouTubeMP3Downloader(tk.Tk):
         if not path or not os.path.exists(path):
             messagebox.showwarning("File Not Found", "Could not locate the file.\nIt may have been moved or deleted.")
             return
-        if sys.platform == "win32":
-            os.startfile(path)
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", path])
+        if self._audio and self._audio.load(path):
+            self._player_paused = False
+            self._player_duration_ms = self._audio.get_length_ms()
+            self._audio.set_volume(self._volume_var.get() * 10)
+            self._audio.play()
+            name = os.path.splitext(os.path.basename(path))[0]
+            self._player_title_var.set(name[:50])
+            self._player_time_var.set("0:00 / 0:00")
+            self._play_pause_btn.config(text="⏸")
+            self._player_frame.pack(fill=tk.X, side=tk.BOTTOM,
+                                    before=self._tw.get("status_bar"))
+            if self._player_update_id:
+                self.after_cancel(self._player_update_id)
+            self._schedule_player_update()
         else:
-            subprocess.Popen(["xdg-open", path])
+            if sys.platform == "win32":
+                os.startfile(path)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", path])
+            else:
+                subprocess.Popen(["xdg-open", path])
+
+    def _player_toggle_pause(self):
+        if not self._audio or not self._audio._open:
+            return
+        if self._player_paused:
+            self._audio.resume()
+            self._player_paused = False
+            self._play_pause_btn.config(text="⏸")
+        else:
+            self._audio.pause()
+            self._player_paused = True
+            self._play_pause_btn.config(text="▶")
+
+    def _player_stop(self):
+        if self._player_update_id:
+            self.after_cancel(self._player_update_id)
+            self._player_update_id = None
+        if self._audio:
+            self._audio.stop()
+            self._audio.close()
+        self._player_frame.pack_forget()
+        self._player_paused = False
+
+    def _player_seek_click(self, event):
+        if not self._audio or not self._audio._open or not self._player_duration_ms:
+            return
+        w = self._player_canvas.winfo_width()
+        if w < 2:
+            return
+        pct = max(0.0, min(1.0, event.x / w))
+        self._audio.seek(int(pct * self._player_duration_ms))
+        self._player_paused = False
+        self._play_pause_btn.config(text="⏸")
+
+    def _player_set_volume(self, val):
+        if self._audio:
+            self._audio.set_volume(int(float(val)) * 10)
+
+    def _schedule_player_update(self):
+        self._update_player_display()
+        self._player_update_id = self.after(500, self._schedule_player_update)
+
+    def _update_player_display(self):
+        if not self._audio or not self._audio._open:
+            return
+        pos = self._audio.get_position_ms()
+        dur = self._player_duration_ms or 1
+
+        pos_s = pos // 1000
+        dur_s = dur // 1000
+        self._player_time_var.set(
+            f"{pos_s // 60}:{pos_s % 60:02d} / {dur_s // 60}:{dur_s % 60:02d}"
+        )
+
+        pct = min(100.0, pos * 100.0 / dur)
+        c = self._player_canvas
+        c.delete("all")
+        w = c.winfo_width()
+        h = c.winfo_height()
+        if w > 2:
+            t = self.T
+            c.create_rectangle(0, 1, w, h - 1, fill=t["card"], outline="")
+            filled = int(w * pct / 100)
+            if filled > 0:
+                c.create_rectangle(0, 1, filled, h - 1, fill=ACCENT, outline="")
+
+        mode = self._audio.mode()
+        if mode == "stopped" and not self._player_paused:
+            self._player_stop()
 
     def _apply_card_theme(self, item: DownloadItem):
         if not hasattr(item, "_card_frame"):
@@ -1143,6 +1385,21 @@ class YouTubeMP3Downloader(tk.Tk):
             w["status_bar"].config(bg=t["panel"])
         if "status_lbl" in w:
             w["status_lbl"].config(bg=t["panel"], fg=t["text_dim"])
+
+        # Audio player bar
+        if "player_frame" in w:
+            w["player_frame"].config(bg=t["panel"])
+        self._play_pause_btn.config(bg=t["panel"], activebackground=t["card"])
+        for k in ("player_stop_btn", "player_vol_lbl", "player_close_btn"):
+            if k in w:
+                w[k].config(bg=t["panel"])
+        for k in ("player_title", "player_time"):
+            if k in w:
+                w[k].config(bg=t["panel"], fg=t["text_dim"] if k == "player_time" else t["text"])
+        if "player_canvas" in w:
+            w["player_canvas"].config(bg=t["panel"])
+        if "player_vol_slider" in w:
+            w["player_vol_slider"].config(bg=t["panel"], troughcolor=t["card"])
 
         # Queue item cards
         for item in self.queue:
