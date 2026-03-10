@@ -13,7 +13,7 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime
 
-VERSION = "1.0.5"
+VERSION = "1.0.6"
 GITHUB_REPO = "jotoltd/YTMP3DL"
 
 # Resolve ffmpeg location: PyInstaller bundle OR local ffmpeg\bin folder
@@ -85,6 +85,7 @@ class DownloadItem:
         self.status = status
         self.progress = progress
         self.error = None
+        self._file_path = None
 
 
 class YouTubeMP3Downloader(tk.Tk):
@@ -557,6 +558,43 @@ class YouTubeMP3Downloader(tk.Tk):
         if path:
             self.download_path.set(path)
 
+    def _is_playlist_url(self, url: str) -> bool:
+        return "list=" in url and ("youtube.com" in url or "youtu.be" in url)
+
+    def _expand_playlist(self, url: str):
+        try:
+            self.after(0, lambda: self._update_status("Fetching playlist info..."))
+            ydl_opts = {"extract_flat": "in_playlist", "quiet": True, "no_warnings": True}
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+            entries = info.get("entries") or []
+            playlist_title = info.get("title", "Playlist")
+            items_to_add = []
+            for e in entries:
+                if not e:
+                    continue
+                vid_id = e.get("id", "")
+                vid_url = e.get("url") or (f"https://www.youtube.com/watch?v={vid_id}" if vid_id else None)
+                if not vid_url:
+                    continue
+                if not vid_url.startswith("http"):
+                    vid_url = f"https://www.youtube.com/watch?v={vid_id}"
+                items_to_add.append(DownloadItem(url=vid_url, title=e.get("title", "Unknown")))
+
+            def _add_all():
+                for item in items_to_add:
+                    self.queue.append(item)
+                    self._add_queue_item_widget(item)
+                self._update_empty_label()
+                if items_to_add:
+                    self.download_btn.config(state=tk.NORMAL)
+                self._log(f"Added {len(items_to_add)} tracks from: {playlist_title}")
+                self._update_status(f"Playlist loaded: {len(items_to_add)} tracks")
+            self.after(0, _add_all)
+        except Exception as e:
+            self._log(f"Playlist error: {e}")
+            self.after(0, lambda: self._update_status("Ready"))
+
     def _add_to_queue(self):
         raw = self.url_var.get().strip()
         if not raw:
@@ -570,6 +608,11 @@ class YouTubeMP3Downloader(tk.Tk):
         for url in urls:
             if not re.match(r"https?://", url):
                 self._log(f"Invalid URL skipped: {url}")
+                continue
+            if self._is_playlist_url(url):
+                self.url_var.set("")
+                self._log(f"Playlist detected — fetching track list...")
+                threading.Thread(target=self._expand_playlist, args=(url,), daemon=True).start()
                 continue
             item = DownloadItem(url=url)
             self.queue.append(item)
@@ -623,12 +666,25 @@ class YouTubeMP3Downloader(tk.Tk):
         progress_bar["value"] = 0
         progress_bar.configure(style="Themed.Horizontal.TProgressbar")
 
+        play_btn = tk.Button(
+            frame, text="▶  Play",
+            font=("Helvetica", 9, "bold"),
+            bg=CARD_BG, fg=SUCCESS,
+            activebackground=SUCCESS, activeforeground="white",
+            relief=tk.FLAT, cursor="hand2",
+            padx=8, pady=2,
+        )
+        play_btn.grid(row=2, column=1, columnspan=2, sticky="e", padx=(10, 0), pady=(3, 0))
+        play_btn.grid_remove()
+        play_btn.config(command=lambda i=item: self._play_file(i._file_path))
+
         item._card_frame = frame
         item._num_label = num_label
         item._title_label = title_label
         item._url_label_widget = url_label
         item._status_label = status_label
         item._progress_bar = progress_bar
+        item._play_btn = play_btn
 
         self._item_frames.append(frame)
         self._apply_card_theme(item)
@@ -680,6 +736,12 @@ class YouTubeMP3Downloader(tk.Tk):
         out_dir = self.download_path.get()
         os.makedirs(out_dir, exist_ok=True)
 
+        def pp_hook(d):
+            if d.get("status") == "finished":
+                fp = (d.get("info_dict") or {}).get("filepath") or d.get("filename", "")
+                if fp:
+                    item._file_path = os.path.splitext(fp)[0] + ".mp3" if not fp.endswith(".mp3") else fp
+
         def progress_hook(d):
             if d["status"] == "downloading":
                 pct_str = d.get("_percent_str", "0%").strip().replace("%", "")
@@ -719,6 +781,7 @@ class YouTubeMP3Downloader(tk.Tk):
             "no_warnings": True,
             "writethumbnail": True,
             "noplaylist": True,
+            "postprocessor_hooks": [pp_hook],
         }
 
         try:
@@ -730,6 +793,7 @@ class YouTubeMP3Downloader(tk.Tk):
                 ydl.download([item.url])
             self._set_item_status(item, "✓ Done", SUCCESS)
             self._log(f"Completed: {title}")
+            self.after(0, lambda i=item: i._play_btn.grid() if hasattr(i, "_play_btn") else None)
         except yt_dlp.utils.DownloadError as e:
             item.error = str(e)
             self._set_item_status(item, "✗ Error", ACCENT)
@@ -823,6 +887,17 @@ class YouTubeMP3Downloader(tk.Tk):
             lightcolor=t["panel"],
         )
 
+    def _play_file(self, path: str):
+        if not path or not os.path.exists(path):
+            messagebox.showwarning("File Not Found", "Could not locate the file.\nIt may have been moved or deleted.")
+            return
+        if sys.platform == "win32":
+            os.startfile(path)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        else:
+            subprocess.Popen(["xdg-open", path])
+
     def _apply_card_theme(self, item: DownloadItem):
         if not hasattr(item, "_card_frame"):
             return
@@ -832,6 +907,8 @@ class YouTubeMP3Downloader(tk.Tk):
         item._title_label.config(bg=t["card"], fg=t["text"])
         item._url_label_widget.config(bg=t["card"], fg=t["text_dim"])
         item._status_label.config(bg=t["card"])
+        if hasattr(item, "_play_btn"):
+            item._play_btn.config(bg=t["card"], fg=t["success"], activebackground=t["success"])
 
     def _apply_theme(self):
         t = self.T
