@@ -14,7 +14,7 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime
 
-VERSION = "1.1.1"
+VERSION = "1.1.2"
 GITHUB_REPO = "jotoltd/YTMP3DL"
 
 # Resolve ffmpeg location: PyInstaller bundle OR local ffmpeg\bin folder
@@ -49,7 +49,6 @@ THEMES = {
         "log_bg":          "#0d2137",
         "entry_bg":        "#16213e",
         "progress_trough": "#0d2137",
-        "toggle_icon":     "☀",
     },
     "light": {
         "bg":              "#f0f2f5",
@@ -62,7 +61,66 @@ THEMES = {
         "log_bg":          "#dde3ee",
         "entry_bg":        "#ffffff",
         "progress_trough": "#b8c4d8",
-        "toggle_icon":     "🌙",
+    },
+    "ocean": {
+        "bg":              "#0a192f",
+        "panel":           "#112240",
+        "card":            "#1d3a6e",
+        "text":            "#ccd6f6",
+        "text_dim":        "#8892b0",
+        "success":         "#64ffda",
+        "warning":         "#ffa07a",
+        "log_bg":          "#071424",
+        "entry_bg":        "#112240",
+        "progress_trough": "#071424",
+    },
+    "sunset": {
+        "bg":              "#1c0f1e",
+        "panel":           "#2e1430",
+        "card":            "#4a1f4e",
+        "text":            "#f5d0d0",
+        "text_dim":        "#c08090",
+        "success":         "#ff9f43",
+        "warning":         "#ff6b6b",
+        "log_bg":          "#130a14",
+        "entry_bg":        "#2e1430",
+        "progress_trough": "#130a14",
+    },
+    "forest": {
+        "bg":              "#0b1a0d",
+        "panel":           "#112b14",
+        "card":            "#1a4a20",
+        "text":            "#d4edda",
+        "text_dim":        "#7db87d",
+        "success":         "#69db7c",
+        "warning":         "#ffd43b",
+        "log_bg":          "#071409",
+        "entry_bg":        "#112b14",
+        "progress_trough": "#071409",
+    },
+    "midnight": {
+        "bg":              "#0d0d1a",
+        "panel":           "#14142b",
+        "card":            "#1e1e40",
+        "text":            "#e0e0ff",
+        "text_dim":        "#8888cc",
+        "success":         "#a78bfa",
+        "warning":         "#f59e0b",
+        "log_bg":          "#08080f",
+        "entry_bg":        "#14142b",
+        "progress_trough": "#08080f",
+    },
+    "rose": {
+        "bg":              "#1a0a12",
+        "panel":           "#2d1120",
+        "card":            "#4a1a32",
+        "text":            "#f0d0e8",
+        "text_dim":        "#c07aaa",
+        "success":         "#f48fb1",
+        "warning":         "#ff8a65",
+        "log_bg":          "#12070e",
+        "entry_bg":        "#2d1120",
+        "progress_trough": "#12070e",
     },
 }
 
@@ -154,6 +212,98 @@ class WindowsAudioPlayer:
 
     def set_volume(self, vol: int):  # 0-1000
         self._send(f'setaudio {self._ALIAS} volume to {vol}')
+
+
+_THEME_LABELS = {
+    "dark":     "Dark",
+    "light":    "Light",
+    "ocean":    "Ocean",
+    "sunset":   "Sunset",
+    "forest":   "Forest",
+    "midnight": "Midnight",
+    "rose":     "Rose",
+}
+
+
+class ThemePickerDialog(tk.Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._app = parent
+        self.title("Choose Theme")
+        self.resizable(False, False)
+        self.grab_set()
+
+        t = parent.T
+        self.configure(bg=t["bg"])
+
+        tk.Label(
+            self, text="Choose a Theme",
+            font=("Helvetica", 14, "bold"), fg=ACCENT, bg=t["bg"],
+        ).pack(pady=(18, 2))
+        tk.Label(
+            self, text="Click any swatch to apply instantly",
+            font=("Helvetica", 10), fg=t["text_dim"], bg=t["bg"],
+        ).pack(pady=(0, 14))
+
+        grid = tk.Frame(self, bg=t["bg"])
+        grid.pack(padx=20, pady=(0, 6))
+
+        for idx, name in enumerate(THEMES):
+            row, col = divmod(idx, 3)
+            self._make_swatch(grid, name, row, col)
+
+        tk.Button(
+            self, text="Close",
+            font=("Helvetica", 10), bg=t["card"], fg=t["text"],
+            activebackground=t["panel"], relief=tk.FLAT, cursor="hand2",
+            padx=18, pady=6, command=self.destroy,
+        ).pack(pady=(8, 18))
+
+        self.update_idletasks()
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+        px, py = parent.winfo_x(), parent.winfo_y()
+        w, h = self.winfo_width(), self.winfo_height()
+        self.geometry(f"+{px + (pw - w) // 2}+{py + (ph - h) // 2}")
+
+    def _make_swatch(self, grid, name, row, col):
+        th = THEMES[name]
+        t_app = self._app.T
+        active = (name == self._app._theme_name)
+
+        border = tk.Frame(grid, bg=ACCENT if active else t_app["card"], bd=0)
+        border.grid(row=row, column=col, padx=8, pady=8)
+
+        inner = tk.Frame(border, bg=th["panel"], cursor="hand2")
+        inner.pack(padx=2 if active else 1, pady=2 if active else 1)
+
+        c = tk.Canvas(inner, width=120, height=64, bg=th["bg"],
+                      highlightthickness=0, cursor="hand2")
+        c.pack()
+        c.create_rectangle(0,  0, 120, 64, fill=th["bg"],    outline="")
+        c.create_rectangle(0,  0, 120, 18, fill=th["panel"], outline="")
+        c.create_rectangle(6, 24,  58, 58, fill=th["card"],  outline="")
+        c.create_oval(     64, 24,  84, 44, fill=ACCENT,          outline="")
+        c.create_oval(     88, 24, 108, 44, fill=th["success"],   outline="")
+
+        lbl_f = tk.Frame(inner, bg=th["panel"])
+        lbl_f.pack(fill=tk.X)
+        tk.Label(
+            lbl_f,
+            text=("✔  " if active else "   ") + _THEME_LABELS.get(name, name.title()),
+            font=("Helvetica", 9, "bold"), bg=th["panel"], fg=th["text"],
+            pady=4,
+        ).pack()
+
+        for widget in (inner, c, lbl_f):
+            widget.bind("<Button-1>", lambda e, n=name: self._apply(n))
+        for child in lbl_f.winfo_children():
+            child.bind("<Button-1>", lambda e, n=name: self._apply(n))
+
+    def _apply(self, name: str):
+        self._app._theme_name = name
+        self._app._save_theme_pref()
+        self._app._apply_theme()
+        self.destroy()
 
 
 class PlaylistSelectDialog(tk.Toplevel):
@@ -446,8 +596,8 @@ class YouTubeMP3Downloader(tk.Tk):
 
         self._theme_btn = tk.Button(
             right,
-            text="☀  Theme",
-            command=self._toggle_theme,
+            text="🎨  Theme",
+            command=self._open_theme_picker,
             font=("Helvetica", 9),
             bg=PANEL_BG, fg=TEXT_SECONDARY,
             activebackground=CARD_BG, activeforeground=TEXT_PRIMARY,
@@ -1175,7 +1325,8 @@ class YouTubeMP3Downloader(tk.Tk):
 
     def _load_theme_pref(self) -> str:
         try:
-            return json.loads(_PREFS_FILE.read_text()).get("theme", "dark")
+            name = json.loads(_PREFS_FILE.read_text()).get("theme", "dark")
+            return name if name in THEMES else "dark"
         except Exception:
             return "dark"
 
@@ -1185,10 +1336,8 @@ class YouTubeMP3Downloader(tk.Tk):
         except Exception:
             pass
 
-    def _toggle_theme(self):
-        self._theme_name = "light" if self._theme_name == "dark" else "dark"
-        self._save_theme_pref()
-        self._apply_theme()
+    def _open_theme_picker(self):
+        ThemePickerDialog(self)
 
     def _configure_ttk_style(self):
         style = ttk.Style()
@@ -1336,7 +1485,7 @@ class YouTubeMP3Downloader(tk.Tk):
             w["version"].config(bg=t["panel"], fg=t["text_dim"])
 
         self._theme_btn.config(
-            text=f"{t['toggle_icon']}  Theme",
+            text="🎨  Theme",
             bg=t["panel"], fg=t["text_dim"],
             activebackground=t["card"], activeforeground=t["text"],
         )
