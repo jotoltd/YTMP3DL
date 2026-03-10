@@ -15,7 +15,7 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime
 
-VERSION = "1.1.5"
+VERSION = "1.1.6"
 GITHUB_REPO = "jotoltd/YTMP3DL"
 
 # Resolve ffmpeg location: PyInstaller bundle OR local ffmpeg\bin folder
@@ -1003,16 +1003,19 @@ class YouTubeMP3Downloader(tk.Tk):
                     pass
                 raise copy_err
 
-            # Launch the updated exe detached (no CREATE_NO_WINDOW — it's a GUI app)
+            # Launch the updated exe in its own process group so it is fully
+            # independent before we exit.  Once Popen() returns, CreateProcess
+            # has already created the new process — we can exit immediately.
             subprocess.Popen(
                 [current_exe],
-                creationflags=subprocess.DETACHED_PROCESS,
+                creationflags=(
+                    subprocess.DETACHED_PROCESS
+                    | subprocess.CREATE_NEW_PROCESS_GROUP
+                ),
                 close_fds=True,
             )
-            self.after(0, lambda: self._update_status("Restarting..."))
-            # Exit from this background thread; time.sleep is more reliable
-            # than self.after() which requires the Tk event loop to cooperate.
-            time.sleep(1.5)
+            # os._exit terminates every thread in this process instantly from
+            # any thread — no Tk event loop needed, no sleep required.
             os._exit(0)
 
         except Exception as e:
