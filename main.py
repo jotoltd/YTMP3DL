@@ -15,7 +15,7 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime
 
-VERSION = "1.1.4"
+VERSION = "1.1.5"
 GITHUB_REPO = "jotoltd/YTMP3DL"
 
 # Resolve ffmpeg location: PyInstaller bundle OR local ffmpeg\bin folder
@@ -1003,13 +1003,17 @@ class YouTubeMP3Downloader(tk.Tk):
                     pass
                 raise copy_err
 
-            # Launch the new exe and exit this one
+            # Launch the updated exe detached (no CREATE_NO_WINDOW — it's a GUI app)
             subprocess.Popen(
                 [current_exe],
-                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW,
+                creationflags=subprocess.DETACHED_PROCESS,
                 close_fds=True,
             )
-            self.after(500, lambda: os._exit(0))
+            self.after(0, lambda: self._update_status("Restarting..."))
+            # Exit from this background thread; time.sleep is more reliable
+            # than self.after() which requires the Tk event loop to cooperate.
+            time.sleep(1.5)
+            os._exit(0)
 
         except Exception as e:
             self._log(f"Update failed: {e}")
