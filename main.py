@@ -15,7 +15,7 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime
 
-VERSION = "1.1.7"
+VERSION = "1.1.8"
 GITHUB_REPO = "jotoltd/YTMP3DL"
 
 # Resolve ffmpeg location: PyInstaller bundle OR local ffmpeg\bin folder
@@ -1081,24 +1081,31 @@ class YouTubeMP3Downloader(tk.Tk):
                     pass
                 raise copy_err
 
-            # Launch the updated exe in its own process group so it is fully
-            # independent before we exit.  Once Popen() returns, CreateProcess
-            # has already created the new process — we can exit immediately.
-            subprocess.Popen(
-                [current_exe],
-                creationflags=(
-                    subprocess.DETACHED_PROCESS
-                    | subprocess.CREATE_NEW_PROCESS_GROUP
-                ),
-                close_fds=True,
-            )
-            # os._exit terminates every thread in this process instantly from
-            # any thread — no Tk event loop needed, no sleep required.
-            os._exit(0)
+            # Hand off to the main (Tk) thread so we can hide this window
+            # before the new process window appears — prevents both windows
+            # being visible at the same time.
+            self.after(0, lambda exe=current_exe: self._do_update_restart(exe))
 
         except Exception as e:
             self._log(f"Update failed: {e}")
             self.after(0, lambda: self._update_btn.config(state=tk.NORMAL, text="⬇  Install Update"))
+
+    def _do_update_restart(self, current_exe: str):
+        """Run on the main Tk thread: hide window, launch new exe, exit."""
+        try:
+            self.withdraw()   # Hide old window immediately
+            self.update()     # Flush Tk so the hide takes effect
+        except Exception:
+            pass
+        subprocess.Popen(
+            [current_exe],
+            creationflags=(
+                subprocess.DETACHED_PROCESS
+                | subprocess.CREATE_NEW_PROCESS_GROUP
+            ),
+            close_fds=True,
+        )
+        os._exit(0)
 
     def _show_entry_context_menu(self, event):
         menu = tk.Menu(self, tearoff=0)
