@@ -13,7 +13,7 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime
 
-VERSION = "1.0.6"
+VERSION = "1.0.7"
 GITHUB_REPO = "jotoltd/YTMP3DL"
 
 # Resolve ffmpeg location: PyInstaller bundle OR local ffmpeg\bin folder
@@ -524,9 +524,8 @@ class YouTubeMP3Downloader(tk.Tk):
     def _download_and_replace(self):
         try:
             dl_url = self._update_available["url"]
-            new_ver = self._update_available["version"]
             tmp_dir = tempfile.mkdtemp()
-            tmp_exe = os.path.join(tmp_dir, "YT-MP3-Downloader_new.exe")
+            tmp_exe = os.path.join(tmp_dir, "update.exe")
             current_exe = sys.executable
 
             def _reporthook(count, block, total):
@@ -535,17 +534,22 @@ class YouTubeMP3Downloader(tk.Tk):
                     self._update_status(f"Downloading update... {pct}%")
 
             urllib.request.urlretrieve(dl_url, tmp_exe, _reporthook)
+            self._update_status("Applying update...")
 
             helper = os.path.join(tmp_dir, "_updater.bat")
             with open(helper, "w") as f:
                 f.write("@echo off\n")
-                f.write("ping -n 3 localhost >nul\n")
+                f.write("timeout /t 3 /nobreak >nul\n")
                 f.write(f'move /Y "{tmp_exe}" "{current_exe}"\n')
                 f.write(f'start "" "{current_exe}"\n')
                 f.write('del "%~f0"\n')
 
-            subprocess.Popen(["cmd", "/c", helper], creationflags=subprocess.CREATE_NO_WINDOW)
-            self.after(0, self.destroy)
+            subprocess.Popen(
+                ["cmd", "/c", helper],
+                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW,
+                close_fds=True,
+            )
+            self.after(500, self.destroy)
         except Exception as e:
             self._log(f"Update failed: {e}")
             self.after(0, lambda: self._update_btn.config(state=tk.NORMAL, text="Update Now"))
