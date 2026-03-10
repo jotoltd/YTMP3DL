@@ -9,12 +9,13 @@ import re
 import tempfile
 import shutil
 import ctypes
+import time
 import urllib.request
 import urllib.error
 from pathlib import Path
 from datetime import datetime
 
-VERSION = "1.1.3"
+VERSION = "1.1.4"
 GITHUB_REPO = "jotoltd/YTMP3DL"
 
 # Resolve ffmpeg location: PyInstaller bundle OR local ffmpeg\bin folder
@@ -1215,12 +1216,44 @@ class YouTubeMP3Downloader(tk.Tk):
         )
         self._active_thread.start()
 
+    @staticmethod
+    def _fmt_duration(seconds: int) -> str:
+        if seconds < 0:
+            return "?"
+        if seconds < 60:
+            return f"{seconds}s"
+        m, s = divmod(seconds, 60)
+        if m < 60:
+            return f"{m}:{s:02d}"
+        h, m2 = divmod(m, 60)
+        return f"{h}:{m2:02d}:{s:02d}"
+
     def _download_all(self, items: list[DownloadItem]):
+        total = len(items)
+        self._dl_current_idx = 0
+        self._dl_total = total
+        self._dl_track_times: list[float] = []
+
+        self._update_status(f"Starting {total} track{'s' if total > 1 else ''}...")
+
         for i, item in enumerate(items):
             if self._stop_flag.is_set():
                 break
-            self._update_status(f"Downloading {i + 1}/{len(items)}: {item.url[:60]}...")
+            self._dl_current_idx = i
+            _track_start = time.monotonic()
             self._download_item(item)
+            elapsed = time.monotonic() - _track_start
+            if item.status.startswith("✓"):
+                self._dl_track_times.append(elapsed)
+            # Post-track playlist ETA
+            remaining = total - (i + 1)
+            if remaining > 0 and self._dl_track_times and not self._stop_flag.is_set():
+                avg = sum(self._dl_track_times) / len(self._dl_track_times)
+                eta_s = int(avg * remaining)
+                self._update_status(
+                    f"✓ {i + 1}/{total} done  —  {remaining} left  —  ~{self._fmt_duration(eta_s)} remaining"
+                )
+
         self.is_downloading = False
         self.after(0, self._on_all_done)
 
@@ -1246,11 +1279,42 @@ class YouTubeMP3Downloader(tk.Tk):
                     pct = float(pct_str)
                 except ValueError:
                     pct = 0
-                speed = d.get("_speed_str", "")
-                eta = d.get("_eta_str", "")
+                speed = d.get("_speed_str", "").strip()
+                eta_secs = d.get("eta")
+
+                i   = getattr(self, "_dl_current_idx", 0)
+                tot = getattr(self, "_dl_total", 1)
+
+                # Per-track ETA
+                if isinstance(eta_secs, (int, float)) and eta_secs >= 0:
+                    track_eta = self._fmt_duration(int(eta_secs))
+                else:
+                    track_eta = d.get("_eta_str", "").strip().lstrip("0:") or "?"
+
+                # Playlist ETA estimate
+                track_times = getattr(self, "_dl_track_times", [])
+                playlist_part = ""
+                if tot > 1:
+                    remaining_tracks = tot - i - 1
+                    if track_times:
+                        avg = sum(track_times) / len(track_times)
+                        # remaining tracks * avg + rest of this track
+                        rest_this = int(eta_secs) if isinstance(eta_secs, (int, float)) else 0
+                        rest_this += 30  # approx conversion time
+                        playlist_eta_s = rest_this + int(avg * remaining_tracks)
+                        playlist_part = f"  ·  Playlist ~{self._fmt_duration(playlist_eta_s)} left"
+                    else:
+                        playlist_part = f"  ·  Track {i + 1}/{tot}"
+
+                speed_part = f"  ↓ {speed}" if speed else ""
                 self._set_item_progress(item, pct)
+                self._set_item_status(
+                    item,
+                    f"{pct:.0f}%  ETA {track_eta}",
+                    TEXT_PRIMARY,
+                )
                 self._update_status(
-                    f"{item.title[:50]}  |  {pct:.1f}%  {speed}  ETA {eta}"
+                    f"Track {i + 1}/{tot}  |  {pct:.0f}%{speed_part}  —  ETA {track_eta}{playlist_part}"
                 )
             elif d["status"] == "finished":
                 self._set_item_progress(item, 100)
