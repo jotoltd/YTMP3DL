@@ -13,7 +13,7 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime
 
-VERSION = "1.0.8"
+VERSION = "1.0.9"
 GITHUB_REPO = "jotoltd/YTMP3DL"
 
 # Resolve ffmpeg location: PyInstaller bundle OR local ffmpeg\bin folder
@@ -536,40 +536,33 @@ class YouTubeMP3Downloader(tk.Tk):
         self._tw["status_lbl"] = lbl_status
 
     def _build_update_banner(self):
-        self._update_frame = tk.Frame(self, bg="#7b5e00", pady=6)
-        self._update_label = tk.Label(
-            self._update_frame,
-            text="",
-            font=("Helvetica", 10),
-            fg="#ffe082",
-            bg="#7b5e00",
+        self._update_frame = tk.Frame(self, bg="#2d4a1e", pady=8)
+
+        dismiss_btn = tk.Button(
+            self._update_frame, text="✕",
+            font=("Helvetica", 9), bg="#2d4a1e", fg="#a5d6a7",
+            activebackground="#1b3a12", relief=tk.FLAT, cursor="hand2",
+            command=lambda: self._update_frame.pack_forget(),
         )
-        self._update_label.pack(side=tk.LEFT, padx=(16, 8))
+        dismiss_btn.pack(side=tk.RIGHT, padx=(0, 10))
+
         self._update_btn = tk.Button(
             self._update_frame,
-            text="Update Now",
+            text="⬇  Install Update",
             font=("Helvetica", 10, "bold"),
-            bg="#ffca28",
-            fg="#1a1a00",
-            activebackground="#ffe082",
-            relief=tk.FLAT,
-            cursor="hand2",
-            padx=10,
-            pady=2,
+            bg="#66bb6a", fg="#0a1f0a",
+            activebackground="#81c784", activeforeground="#0a1f0a",
+            relief=tk.FLAT, cursor="hand2",
+            padx=14, pady=4,
             command=self._apply_update,
         )
-        self._update_btn.pack(side=tk.LEFT)
-        tk.Button(
-            self._update_frame,
-            text="✕",
-            font=("Helvetica", 9),
-            bg="#7b5e00",
-            fg="#ffe082",
-            activebackground="#5a4400",
-            relief=tk.FLAT,
-            cursor="hand2",
-            command=lambda: self._update_frame.pack_forget(),
-        ).pack(side=tk.RIGHT, padx=8)
+        self._update_btn.pack(side=tk.RIGHT, padx=(0, 8))
+
+        self._update_label = tk.Label(
+            self._update_frame, text="",
+            font=("Helvetica", 10), fg="#c8e6c9", bg="#2d4a1e",
+        )
+        self._update_label.pack(side=tk.LEFT, padx=(16, 8))
 
     def _manual_update_check(self):
         self._set_update_btn("⟳  Checking...", TEXT_SECONDARY, state=tk.DISABLED)
@@ -624,21 +617,25 @@ class YouTubeMP3Downloader(tk.Tk):
             return (0,)
 
     def _show_update_banner(self, version: str):
-        self._update_label.config(text=f"Update available: v{version}  —  new version ready to download.")
-        self._update_frame.pack(fill=tk.X, after=None)
-        self._update_frame.lift()
+        has_url = bool(self._update_available and self._update_available.get("url"))
+        self._update_label.config(
+            text=f"🔔  v{version} is available  —  "
+                 + ("the app will restart automatically after installing." if has_url
+                    else "click to open the download page.")
+        )
+        self._update_btn.config(text="⬇  Install Update" if has_url else "🌐  Download Page")
         self._update_frame.pack(fill=tk.X)
         self._log(f"Update available: v{version}")
 
     def _apply_update(self):
+        import webbrowser
         if not self._update_available or not self._update_available.get("url"):
-            messagebox.showinfo("Update", f"Visit https://github.com/{GITHUB_REPO}/releases to download the latest version.")
-            return
-        if not getattr(sys, "frozen", False):
-            import webbrowser
             webbrowser.open(f"https://github.com/{GITHUB_REPO}/releases/latest")
             return
-        self._update_btn.config(state=tk.DISABLED, text="Downloading...")
+        if not getattr(sys, "frozen", False):
+            webbrowser.open(f"https://github.com/{GITHUB_REPO}/releases/latest")
+            return
+        self._update_btn.config(state=tk.DISABLED, text="⏳  Downloading...")
         threading.Thread(target=self._download_and_replace, daemon=True).start()
 
     def _download_and_replace(self):
@@ -654,25 +651,36 @@ class YouTubeMP3Downloader(tk.Tk):
                     self._update_status(f"Downloading update... {pct}%")
 
             urllib.request.urlretrieve(dl_url, tmp_exe, _reporthook)
-            self._update_status("Applying update...")
 
-            helper = os.path.join(tmp_dir, "_updater.bat")
-            with open(helper, "w") as f:
-                f.write("@echo off\n")
-                f.write("timeout /t 3 /nobreak >nul\n")
-                f.write(f'move /Y "{tmp_exe}" "{current_exe}"\n')
-                f.write(f'start "" "{current_exe}"\n')
-                f.write('del "%~f0"\n')
+            if os.path.getsize(tmp_exe) < 500_000:
+                raise Exception("Download appears corrupted (file too small).")
+
+            self._update_status("Preparing to install update...")
+
+            ps = (
+                f'Start-Sleep -Seconds 3\n'
+                f'try {{\n'
+                f'  Copy-Item -LiteralPath "{tmp_exe}" -Destination "{current_exe}" -Force -ErrorAction Stop\n'
+                f'  Start-Process -FilePath "{current_exe}"\n'
+                f'}} catch {{\n'
+                f'  Start-Process -FilePath "https://github.com/{GITHUB_REPO}/releases/latest"\n'
+                f'}}\n'
+                f'try {{ Remove-Item -LiteralPath "{tmp_exe}" -Force }} catch {{}}\n'
+            )
+            helper = os.path.join(tmp_dir, "_updater.ps1")
+            with open(helper, "w", encoding="utf-8") as f:
+                f.write(ps)
 
             subprocess.Popen(
-                ["cmd", "/c", helper],
+                ["powershell", "-ExecutionPolicy", "Bypass",
+                 "-WindowStyle", "Hidden", "-File", helper],
                 creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW,
                 close_fds=True,
             )
             self.after(500, self.destroy)
         except Exception as e:
             self._log(f"Update failed: {e}")
-            self.after(0, lambda: self._update_btn.config(state=tk.NORMAL, text="Update Now"))
+            self.after(0, lambda: self._update_btn.config(state=tk.NORMAL, text="⬇  Install Update"))
 
     def _show_entry_context_menu(self, event):
         menu = tk.Menu(self, tearoff=0)
