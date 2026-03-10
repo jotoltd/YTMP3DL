@@ -13,7 +13,7 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime
 
-VERSION = "1.0.4"
+VERSION = "1.0.5"
 GITHUB_REPO = "jotoltd/YTMP3DL"
 
 # Resolve ffmpeg location: PyInstaller bundle OR local ffmpeg\bin folder
@@ -33,16 +33,49 @@ except ImportError:
     import yt_dlp
 
 
-DARK_BG = "#1a1a2e"
-PANEL_BG = "#16213e"
-CARD_BG = "#0f3460"
 ACCENT = "#e94560"
 ACCENT_HOVER = "#c73652"
-TEXT_PRIMARY = "#eaeaea"
-TEXT_SECONDARY = "#a0a0b0"
-SUCCESS = "#4caf50"
-WARNING = "#ff9800"
-PROGRESS_BG = "#0d2137"
+
+THEMES = {
+    "dark": {
+        "bg":              "#1a1a2e",
+        "panel":           "#16213e",
+        "card":            "#0f3460",
+        "text":            "#eaeaea",
+        "text_dim":        "#a0a0b0",
+        "success":         "#4caf50",
+        "warning":         "#ff9800",
+        "log_bg":          "#0d2137",
+        "entry_bg":        "#16213e",
+        "progress_trough": "#0d2137",
+        "toggle_icon":     "☀",
+    },
+    "light": {
+        "bg":              "#f0f2f5",
+        "panel":           "#ffffff",
+        "card":            "#e2e8f4",
+        "text":            "#1a1a2e",
+        "text_dim":        "#6b6b8a",
+        "success":         "#2e7d32",
+        "warning":         "#bf360c",
+        "log_bg":          "#dde3ee",
+        "entry_bg":        "#ffffff",
+        "progress_trough": "#b8c4d8",
+        "toggle_icon":     "🌙",
+    },
+}
+
+_PREFS_FILE = Path.home() / ".ytmp3dl_prefs.json"
+
+# Legacy aliases (dark theme defaults used at widget-creation time)
+DARK_BG = THEMES["dark"]["bg"]
+PANEL_BG = THEMES["dark"]["panel"]
+CARD_BG = THEMES["dark"]["card"]
+TEXT_PRIMARY = THEMES["dark"]["text"]
+TEXT_SECONDARY = THEMES["dark"]["text_dim"]
+SUCCESS = THEMES["dark"]["success"]
+WARNING = THEMES["dark"]["warning"]
+PROGRESS_BG = THEMES["dark"]["log_bg"]
 
 
 class DownloadItem:
@@ -62,18 +95,25 @@ class YouTubeMP3Downloader(tk.Tk):
         self.minsize(700, 560)
         self.configure(bg=DARK_BG)
 
+        self._theme_name = self._load_theme_pref()
+        self._tw: dict = {}  # widget registry for theme updates
+
         self.download_path = tk.StringVar(value=str(Path.home() / "Downloads"))
         self.url_var = tk.StringVar()
         self.queue: list[DownloadItem] = []
         self.is_downloading = False
         self._active_thread = None
-
         self._update_available = None
 
         self._build_ui()
+        self._apply_theme()
         self._check_ffmpeg()
         threading.Thread(target=self._check_for_updates, daemon=True).start()
         self.after(300, lambda: self._update_status("Checking for updates..."))
+
+    @property
+    def T(self) -> dict:
+        return THEMES[self._theme_name]
 
     def _check_ffmpeg(self):
         try:
@@ -112,63 +152,77 @@ class YouTubeMP3Downloader(tk.Tk):
         header = tk.Frame(self, bg=PANEL_BG, height=70)
         header.pack(fill=tk.X)
         header.pack_propagate(False)
+        self._tw["header"] = header
 
         inner = tk.Frame(header, bg=PANEL_BG)
         inner.place(relx=0.5, rely=0.5, anchor="center")
+        self._tw["header_inner"] = inner
 
-        tk.Label(
-            inner,
-            text="▶  YouTube MP3 Downloader",
-            font=("Helvetica", 22, "bold"),
-            fg=ACCENT,
-            bg=PANEL_BG,
-        ).pack(side=tk.LEFT)
+        lbl_title = tk.Label(
+            inner, text="▶  YouTube MP3 Downloader",
+            font=("Helvetica", 22, "bold"), fg=ACCENT, bg=PANEL_BG,
+        )
+        lbl_title.pack(side=tk.LEFT)
+        self._tw["title"] = lbl_title
 
-        tk.Label(
-            inner,
-            text="  320 kbps",
-            font=("Helvetica", 11),
-            fg=SUCCESS,
-            bg=PANEL_BG,
-        ).pack(side=tk.LEFT, pady=(8, 0))
+        lbl_quality = tk.Label(
+            inner, text="  320 kbps", font=("Helvetica", 11),
+            fg=SUCCESS, bg=PANEL_BG,
+        )
+        lbl_quality.pack(side=tk.LEFT, pady=(8, 0))
+        self._tw["quality"] = lbl_quality
 
-        tk.Label(
-            inner,
-            text=f"  v{VERSION}",
+        lbl_version = tk.Label(
+            inner, text=f"  v{VERSION}", font=("Helvetica", 9),
+            fg=TEXT_SECONDARY, bg=PANEL_BG,
+        )
+        lbl_version.pack(side=tk.LEFT, pady=(10, 0))
+        self._tw["version"] = lbl_version
+
+        right = tk.Frame(header, bg=PANEL_BG)
+        right.place(relx=1.0, rely=0.5, anchor="e", x=-12)
+        self._tw["header_right"] = right
+
+        self._theme_btn = tk.Button(
+            right,
+            text="☀  Theme",
+            command=self._toggle_theme,
             font=("Helvetica", 9),
-            fg=TEXT_SECONDARY,
-            bg=PANEL_BG,
-        ).pack(side=tk.LEFT, pady=(10, 0))
+            bg=PANEL_BG, fg=TEXT_SECONDARY,
+            activebackground=CARD_BG, activeforeground=TEXT_PRIMARY,
+            relief=tk.FLAT, cursor="hand2",
+            padx=8, pady=4, bd=0,
+        )
+        self._theme_btn.pack(side=tk.LEFT, padx=(0, 6))
 
         self._update_check_btn = tk.Button(
-            header,
+            right,
             text="⟳  Check for Updates",
             command=self._manual_update_check,
             font=("Helvetica", 9),
-            bg=PANEL_BG,
-            fg=TEXT_SECONDARY,
-            activebackground=CARD_BG,
-            activeforeground=TEXT_PRIMARY,
-            relief=tk.FLAT,
-            cursor="hand2",
-            padx=10,
-            pady=4,
-            bd=0,
+            bg=PANEL_BG, fg=TEXT_SECONDARY,
+            activebackground=CARD_BG, activeforeground=TEXT_PRIMARY,
+            relief=tk.FLAT, cursor="hand2",
+            padx=10, pady=4, bd=0,
         )
-        self._update_check_btn.place(relx=1.0, rely=0.5, anchor="e", x=-12)
+        self._update_check_btn.pack(side=tk.LEFT)
 
     def _build_input_section(self):
         frame = tk.Frame(self, bg=DARK_BG, padx=20, pady=14)
         frame.pack(fill=tk.X)
+        self._tw["input_frame"] = frame
 
-        tk.Label(
+        lbl_url = tk.Label(
             frame, text="YouTube URL", font=("Helvetica", 10, "bold"),
             fg=TEXT_SECONDARY, bg=DARK_BG,
-        ).grid(row=0, column=0, sticky="w", pady=(0, 4))
+        )
+        lbl_url.grid(row=0, column=0, sticky="w", pady=(0, 4))
+        self._tw["url_label"] = lbl_url
 
         url_row = tk.Frame(frame, bg=DARK_BG)
         url_row.grid(row=1, column=0, sticky="ew")
         frame.columnconfigure(0, weight=1)
+        self._tw["url_row"] = url_row
 
         self.url_entry = tk.Entry(
             url_row,
@@ -182,6 +236,7 @@ class YouTubeMP3Downloader(tk.Tk):
         )
         self.url_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=8, ipadx=10)
         self.url_entry.bind("<Return>", lambda e: self._add_to_queue())
+        self._tw["url_entry"] = self.url_entry
 
         self._add_btn = tk.Button(
             url_row,
@@ -201,11 +256,14 @@ class YouTubeMP3Downloader(tk.Tk):
 
         dir_row = tk.Frame(frame, bg=DARK_BG)
         dir_row.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        self._tw["dir_row"] = dir_row
 
-        tk.Label(
+        lbl_save = tk.Label(
             dir_row, text="Save to:", font=("Helvetica", 10),
             fg=TEXT_SECONDARY, bg=DARK_BG,
-        ).pack(side=tk.LEFT)
+        )
+        lbl_save.pack(side=tk.LEFT)
+        self._tw["save_label"] = lbl_save
 
         self.dir_label = tk.Label(
             dir_row,
@@ -216,8 +274,9 @@ class YouTubeMP3Downloader(tk.Tk):
             anchor="w",
         )
         self.dir_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0))
+        self._tw["dir_label"] = self.dir_label
 
-        tk.Button(
+        browse_btn = tk.Button(
             dir_row,
             text="Browse",
             command=self._browse_dir,
@@ -230,19 +289,25 @@ class YouTubeMP3Downloader(tk.Tk):
             cursor="hand2",
             padx=10,
             pady=4,
-        ).pack(side=tk.RIGHT)
+        )
+        browse_btn.pack(side=tk.RIGHT)
+        self._tw["browse_btn"] = browse_btn
 
     def _build_queue_section(self):
         outer = tk.Frame(self, bg=DARK_BG, padx=20)
         outer.pack(fill=tk.BOTH, expand=True)
+        self._tw["queue_outer"] = outer
 
         header_row = tk.Frame(outer, bg=DARK_BG)
         header_row.pack(fill=tk.X, pady=(6, 6))
+        self._tw["queue_header_row"] = header_row
 
-        tk.Label(
+        lbl_queue = tk.Label(
             header_row, text="Download Queue",
             font=("Helvetica", 11, "bold"), fg=TEXT_PRIMARY, bg=DARK_BG,
-        ).pack(side=tk.LEFT)
+        )
+        lbl_queue.pack(side=tk.LEFT)
+        self._tw["queue_title"] = lbl_queue
 
         self.download_btn = tk.Button(
             header_row,
@@ -261,7 +326,7 @@ class YouTubeMP3Downloader(tk.Tk):
         )
         self.download_btn.pack(side=tk.RIGHT)
 
-        tk.Button(
+        clear_btn = tk.Button(
             header_row,
             text="Clear Queue",
             command=self._clear_queue,
@@ -274,10 +339,13 @@ class YouTubeMP3Downloader(tk.Tk):
             cursor="hand2",
             padx=10,
             pady=5,
-        ).pack(side=tk.RIGHT, padx=(0, 8))
+        )
+        clear_btn.pack(side=tk.RIGHT, padx=(0, 8))
+        self._tw["clear_btn"] = clear_btn
 
         list_frame = tk.Frame(outer, bg=PANEL_BG)
         list_frame.pack(fill=tk.BOTH, expand=True)
+        self._tw["list_frame"] = list_frame
 
         self.queue_canvas = tk.Canvas(list_frame, bg=PANEL_BG, highlightthickness=0)
         scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.queue_canvas.yview)
@@ -310,11 +378,14 @@ class YouTubeMP3Downloader(tk.Tk):
     def _build_log_section(self):
         frame = tk.Frame(self, bg=DARK_BG, padx=20)
         frame.pack(fill=tk.X, pady=(0, 6))
+        self._tw["log_frame"] = frame
 
-        tk.Label(
+        lbl_log = tk.Label(
             frame, text="Log", font=("Helvetica", 10, "bold"),
             fg=TEXT_SECONDARY, bg=DARK_BG,
-        ).pack(anchor="w")
+        )
+        lbl_log.pack(anchor="w")
+        self._tw["log_label"] = lbl_log
 
         self.log_text = tk.Text(
             frame,
@@ -334,11 +405,14 @@ class YouTubeMP3Downloader(tk.Tk):
         bar = tk.Frame(self, bg=PANEL_BG, height=26)
         bar.pack(fill=tk.X, side=tk.BOTTOM)
         bar.pack_propagate(False)
+        self._tw["status_bar"] = bar
 
-        tk.Label(
+        lbl_status = tk.Label(
             bar, textvariable=self.status_var,
             font=("Helvetica", 10), fg=TEXT_SECONDARY, bg=PANEL_BG, anchor="w", padx=12,
-        ).pack(fill=tk.X, pady=4)
+        )
+        lbl_status.pack(fill=tk.X, pady=4)
+        self._tw["status_lbl"] = lbl_status
 
     def _build_update_banner(self):
         self._update_frame = tk.Frame(self, bg="#7b5e00", pady=6)
@@ -547,24 +621,17 @@ class YouTubeMP3Downloader(tk.Tk):
         )
         progress_bar.grid(row=1, column=2, padx=(10, 0), pady=(2, 0))
         progress_bar["value"] = 0
+        progress_bar.configure(style="Themed.Horizontal.TProgressbar")
 
-        style = ttk.Style()
-        style.theme_use("default")
-        style.configure(
-            "red.Horizontal.TProgressbar",
-            troughcolor=PROGRESS_BG,
-            background=ACCENT,
-            bordercolor=CARD_BG,
-            lightcolor=ACCENT,
-            darkcolor=ACCENT,
-        )
-        progress_bar.configure(style="red.Horizontal.TProgressbar")
-
+        item._card_frame = frame
+        item._num_label = num_label
         item._title_label = title_label
+        item._url_label_widget = url_label
         item._status_label = status_label
         item._progress_bar = progress_bar
 
         self._item_frames.append(frame)
+        self._apply_card_theme(item)
 
     def _update_empty_label(self):
         if self.queue:
@@ -714,6 +781,131 @@ class YouTubeMP3Downloader(tk.Tk):
             self.log_text.config(state=tk.DISABLED)
 
         self.after(0, _append)
+
+    # ── Theming ──────────────────────────────────────────────────────────
+
+    def _load_theme_pref(self) -> str:
+        try:
+            return json.loads(_PREFS_FILE.read_text()).get("theme", "dark")
+        except Exception:
+            return "dark"
+
+    def _save_theme_pref(self):
+        try:
+            _PREFS_FILE.write_text(json.dumps({"theme": self._theme_name}))
+        except Exception:
+            pass
+
+    def _toggle_theme(self):
+        self._theme_name = "light" if self._theme_name == "dark" else "dark"
+        self._save_theme_pref()
+        self._apply_theme()
+
+    def _configure_ttk_style(self):
+        style = ttk.Style()
+        style.theme_use("default")
+        t = self.T
+        style.configure(
+            "Themed.Horizontal.TProgressbar",
+            troughcolor=t["progress_trough"],
+            background=ACCENT,
+            bordercolor=t["card"],
+            lightcolor=ACCENT,
+            darkcolor=ACCENT,
+        )
+        style.configure(
+            "Vertical.TScrollbar",
+            background=t["panel"],
+            troughcolor=t["bg"],
+            bordercolor=t["bg"],
+            arrowcolor=t["text_dim"],
+            darkcolor=t["panel"],
+            lightcolor=t["panel"],
+        )
+
+    def _apply_card_theme(self, item: DownloadItem):
+        if not hasattr(item, "_card_frame"):
+            return
+        t = self.T
+        item._card_frame.config(bg=t["card"])
+        item._num_label.config(bg=t["card"], fg=t["text_dim"])
+        item._title_label.config(bg=t["card"], fg=t["text"])
+        item._url_label_widget.config(bg=t["card"], fg=t["text_dim"])
+        item._status_label.config(bg=t["card"])
+
+    def _apply_theme(self):
+        t = self.T
+        self.configure(bg=t["bg"])
+        w = self._tw
+
+        # Header
+        for k in ("header", "header_inner", "header_right"):
+            if k in w:
+                w[k].config(bg=t["panel"])
+        if "title" in w:
+            w["title"].config(bg=t["panel"])
+        if "quality" in w:
+            w["quality"].config(bg=t["panel"], fg=t["success"])
+        if "version" in w:
+            w["version"].config(bg=t["panel"], fg=t["text_dim"])
+
+        self._theme_btn.config(
+            text=f"{t['toggle_icon']}  Theme",
+            bg=t["panel"], fg=t["text_dim"],
+            activebackground=t["card"], activeforeground=t["text"],
+        )
+        self._update_check_btn.config(
+            bg=t["panel"], fg=t["text_dim"],
+            activebackground=t["card"], activeforeground=t["text"],
+        )
+
+        # Input section
+        for k in ("input_frame", "url_row", "dir_row"):
+            if k in w:
+                w[k].config(bg=t["bg"])
+        if "url_label" in w:
+            w["url_label"].config(bg=t["bg"], fg=t["text_dim"])
+        if "url_entry" in w:
+            w["url_entry"].config(bg=t["entry_bg"], fg=t["text"], insertbackground=t["text"])
+        if "save_label" in w:
+            w["save_label"].config(bg=t["bg"], fg=t["text_dim"])
+        if "dir_label" in w:
+            w["dir_label"].config(bg=t["bg"], fg=t["text"])
+        if "browse_btn" in w:
+            w["browse_btn"].config(bg=t["card"], fg=t["text"])
+
+        # Queue section
+        for k in ("queue_outer", "queue_header_row"):
+            if k in w:
+                w[k].config(bg=t["bg"])
+        if "queue_title" in w:
+            w["queue_title"].config(bg=t["bg"], fg=t["text"])
+        if "clear_btn" in w:
+            w["clear_btn"].config(bg=t["card"], fg=t["text_dim"])
+        if "list_frame" in w:
+            w["list_frame"].config(bg=t["bg"])
+        self.queue_canvas.config(bg=t["panel"])
+        self.queue_inner.config(bg=t["panel"])
+        self._empty_label.config(bg=t["panel"], fg=t["text_dim"])
+
+        # Log
+        if "log_frame" in w:
+            w["log_frame"].config(bg=t["bg"])
+        if "log_label" in w:
+            w["log_label"].config(bg=t["bg"], fg=t["text_dim"])
+        self.log_text.config(bg=t["log_bg"], fg=t["text_dim"])
+
+        # Status bar
+        if "status_bar" in w:
+            w["status_bar"].config(bg=t["panel"])
+        if "status_lbl" in w:
+            w["status_lbl"].config(bg=t["panel"], fg=t["text_dim"])
+
+        # Queue item cards
+        for item in self.queue:
+            self._apply_card_theme(item)
+
+        self._configure_ttk_style()
 
 
 if __name__ == "__main__":
