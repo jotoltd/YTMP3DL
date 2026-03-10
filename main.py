@@ -13,7 +13,7 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime
 
-VERSION = "1.0.7"
+VERSION = "1.0.8"
 GITHUB_REPO = "jotoltd/YTMP3DL"
 
 # Resolve ffmpeg location: PyInstaller bundle OR local ffmpeg\bin folder
@@ -88,6 +88,107 @@ class DownloadItem:
         self._file_path = None
 
 
+class PlaylistSelectDialog(tk.Toplevel):
+    def __init__(self, parent, playlist_title: str, items: list):
+        super().__init__(parent)
+        self._app = parent
+        self.title("Select Tracks")
+        self.resizable(True, True)
+        self.grab_set()
+        self.selected: list = []
+        self._items = items
+        self._vars: list[tk.BooleanVar] = []
+
+        t = parent.T
+        self.configure(bg=t["bg"])
+        self.geometry("600x520")
+
+        tk.Label(
+            self, text=f"{playlist_title}",
+            font=("Helvetica", 13, "bold"), fg=ACCENT, bg=t["bg"],
+        ).pack(padx=20, pady=(16, 2))
+
+        tk.Label(
+            self, text=f"{len(items)} tracks found — choose which to add:",
+            font=("Helvetica", 10), fg=t["text_dim"], bg=t["bg"],
+        ).pack()
+
+        btn_row = tk.Frame(self, bg=t["bg"])
+        btn_row.pack(fill=tk.X, padx=20, pady=8)
+        for label, fn in (("Select All", self._select_all), ("Deselect All", self._deselect_all)):
+            tk.Button(
+                btn_row, text=label, command=fn,
+                font=("Helvetica", 10), bg=t["card"], fg=t["text"],
+                activebackground=t["panel"], relief=tk.FLAT, cursor="hand2", padx=10, pady=3,
+            ).pack(side=tk.LEFT, padx=(0, 6))
+
+        list_frame = tk.Frame(self, bg=t["panel"], bd=0)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 8))
+
+        canvas = tk.Canvas(list_frame, bg=t["panel"], highlightthickness=0)
+        sb = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+        inner = tk.Frame(canvas, bg=t["panel"])
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=sb.set)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+
+        for i, item in enumerate(items):
+            var = tk.BooleanVar(value=True)
+            self._vars.append(var)
+            row_bg = t["card"] if i % 2 == 0 else t["panel"]
+            row = tk.Frame(inner, bg=row_bg)
+            row.pack(fill=tk.X)
+            tk.Checkbutton(
+                row, variable=var,
+                text=f"  {i+1}.  {item.title[:72]}",
+                font=("Helvetica", 10), bg=row_bg, fg=t["text"],
+                activebackground=row_bg, selectcolor=t["card"],
+                anchor="w", padx=6, pady=5,
+            ).pack(fill=tk.X)
+
+        self._count_var = tk.StringVar()
+        self._update_count()
+        for v in self._vars:
+            v.trace_add("write", lambda *_: self._update_count())
+
+        bottom = tk.Frame(self, bg=t["bg"])
+        bottom.pack(fill=tk.X, padx=20, pady=(0, 16))
+        tk.Button(
+            bottom, text="Cancel", command=self.destroy,
+            font=("Helvetica", 11), bg=t["card"], fg=t["text_dim"],
+            activebackground=t["panel"], relief=tk.FLAT, cursor="hand2", padx=12, pady=6,
+        ).pack(side=tk.RIGHT, padx=(8, 0))
+        tk.Button(
+            bottom, textvariable=self._count_var, command=self._confirm,
+            font=("Helvetica", 11, "bold"), bg=ACCENT, fg="white",
+            activebackground=ACCENT_HOVER, relief=tk.FLAT, cursor="hand2", padx=12, pady=6,
+        ).pack(side=tk.RIGHT)
+
+        self.update_idletasks()
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+        px, py = parent.winfo_x(), parent.winfo_y()
+        w, h = self.winfo_width(), self.winfo_height()
+        self.geometry(f"+{px + (pw-w)//2}+{py + (ph-h)//2}")
+        self.wait_window()
+
+    def _select_all(self):
+        for v in self._vars: v.set(True)
+
+    def _deselect_all(self):
+        for v in self._vars: v.set(False)
+
+    def _update_count(self):
+        n = sum(1 for v in self._vars if v.get())
+        self._count_var.set(f"Add {n} track{'s' if n != 1 else ''}" if n else "Nothing selected")
+
+    def _confirm(self):
+        self.selected = [item for item, var in zip(self._items, self._vars) if var.get()]
+        self.destroy()
+
+
 class YouTubeMP3Downloader(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -103,6 +204,7 @@ class YouTubeMP3Downloader(tk.Tk):
         self.url_var = tk.StringVar()
         self.queue: list[DownloadItem] = []
         self.is_downloading = False
+        self._stop_flag = threading.Event()
         self._active_thread = None
         self._update_available = None
 
@@ -237,6 +339,7 @@ class YouTubeMP3Downloader(tk.Tk):
         )
         self.url_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=8, ipadx=10)
         self.url_entry.bind("<Return>", lambda e: self._add_to_queue())
+        self.url_entry.bind("<Button-3>", self._show_entry_context_menu)
         self._tw["url_entry"] = self.url_entry
 
         self._add_btn = tk.Button(
@@ -326,6 +429,23 @@ class YouTubeMP3Downloader(tk.Tk):
             state=tk.DISABLED,
         )
         self.download_btn.pack(side=tk.RIGHT)
+
+        self._stop_btn = tk.Button(
+            header_row,
+            text="⬛  Stop",
+            command=self._stop_downloads,
+            font=("Helvetica", 10, "bold"),
+            bg="#7b1a1a",
+            fg="#ffcccc",
+            activebackground="#a02020",
+            activeforeground="white",
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=10,
+            pady=5,
+            state=tk.DISABLED,
+        )
+        self._stop_btn.pack(side=tk.RIGHT, padx=(0, 8))
 
         clear_btn = tk.Button(
             header_row,
@@ -554,6 +674,21 @@ class YouTubeMP3Downloader(tk.Tk):
             self._log(f"Update failed: {e}")
             self.after(0, lambda: self._update_btn.config(state=tk.NORMAL, text="Update Now"))
 
+    def _show_entry_context_menu(self, event):
+        menu = tk.Menu(self, tearoff=0)
+        t = self.T
+        menu.configure(bg=t["card"], fg=t["text"], activebackground=ACCENT, activeforeground="white")
+        menu.add_command(label="Cut",        command=lambda: self.url_entry.event_generate("<<Cut>>"))
+        menu.add_command(label="Copy",       command=lambda: self.url_entry.event_generate("<<Copy>>"))
+        menu.add_command(label="Paste",      command=lambda: self.url_entry.event_generate("<<Paste>>"))
+        menu.add_separator()
+        menu.add_command(label="Select All", command=lambda: self.url_entry.select_range(0, tk.END))
+        menu.add_command(label="Clear",      command=lambda: self.url_var.set(""))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
     def _on_mousewheel(self, event):
         self.queue_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
@@ -586,14 +721,21 @@ class YouTubeMP3Downloader(tk.Tk):
                 items_to_add.append(DownloadItem(url=vid_url, title=e.get("title", "Unknown")))
 
             def _add_all():
-                for item in items_to_add:
+                if not items_to_add:
+                    self._log("Playlist had no downloadable tracks.")
+                    return
+                dlg = PlaylistSelectDialog(self, playlist_title, items_to_add)
+                selected = dlg.selected
+                if not selected:
+                    self._update_status("No tracks selected.")
+                    return
+                for item in selected:
                     self.queue.append(item)
                     self._add_queue_item_widget(item)
                 self._update_empty_label()
-                if items_to_add:
-                    self.download_btn.config(state=tk.NORMAL)
-                self._log(f"Added {len(items_to_add)} tracks from: {playlist_title}")
-                self._update_status(f"Playlist loaded: {len(items_to_add)} tracks")
+                self.download_btn.config(state=tk.NORMAL)
+                self._log(f"Added {len(selected)}/{len(items_to_add)} tracks from: {playlist_title}")
+                self._update_status(f"Added {len(selected)} track(s) to queue")
             self.after(0, _add_all)
         except Exception as e:
             self._log(f"Playlist error: {e}")
@@ -711,6 +853,11 @@ class YouTubeMP3Downloader(tk.Tk):
         self.download_btn.config(state=tk.DISABLED)
         self._log("Queue cleared.")
 
+    def _stop_downloads(self):
+        self._stop_flag.set()
+        self._stop_btn.config(state=tk.DISABLED, text="Stopping...")
+        self._update_status("Stopping after current track...")
+
     def _start_downloads(self):
         if self.is_downloading:
             return
@@ -718,8 +865,10 @@ class YouTubeMP3Downloader(tk.Tk):
         if not pending:
             messagebox.showinfo("Nothing to download", "No pending items in the queue.")
             return
+        self._stop_flag.clear()
         self.is_downloading = True
         self.download_btn.config(state=tk.DISABLED, text="Downloading...")
+        self._stop_btn.config(state=tk.NORMAL, text="⬛  Stop")
         self._add_btn.config(state=tk.DISABLED)
         self._active_thread = threading.Thread(
             target=self._download_all, args=(pending,), daemon=True
@@ -728,6 +877,8 @@ class YouTubeMP3Downloader(tk.Tk):
 
     def _download_all(self, items: list[DownloadItem]):
         for i, item in enumerate(items):
+            if self._stop_flag.is_set():
+                break
             self._update_status(f"Downloading {i + 1}/{len(items)}: {item.url[:60]}...")
             self._download_item(item)
         self.is_downloading = False
@@ -747,6 +898,8 @@ class YouTubeMP3Downloader(tk.Tk):
                     item._file_path = os.path.splitext(fp)[0] + ".mp3" if not fp.endswith(".mp3") else fp
 
         def progress_hook(d):
+            if self._stop_flag.is_set():
+                raise Exception("__stopped__")
             if d["status"] == "downloading":
                 pct_str = d.get("_percent_str", "0%").strip().replace("%", "")
                 try:
@@ -798,17 +951,18 @@ class YouTubeMP3Downloader(tk.Tk):
             self._set_item_status(item, "✓ Done", SUCCESS)
             self._log(f"Completed: {title}")
             self.after(0, lambda i=item: i._play_btn.grid() if hasattr(i, "_play_btn") else None)
-        except yt_dlp.utils.DownloadError as e:
-            item.error = str(e)
-            self._set_item_status(item, "✗ Error", ACCENT)
-            self._log(f"Error: {str(e)[:120]}")
         except Exception as e:
-            item.error = str(e)
-            self._set_item_status(item, "✗ Error", ACCENT)
-            self._log(f"Unexpected error: {str(e)[:120]}")
+            if "__stopped__" in str(e) or self._stop_flag.is_set():
+                self._set_item_status(item, "⬛ Stopped", TEXT_SECONDARY)
+                self._set_item_progress(item, 0)
+            else:
+                item.error = str(e)
+                self._set_item_status(item, "✗ Error", ACCENT)
+                self._log(f"Error: {str(e)[:120]}")
 
     def _on_all_done(self):
         self.download_btn.config(state=tk.NORMAL, text="⬇  Download All")
+        self._stop_btn.config(state=tk.DISABLED, text="⬛  Stop")
         self._add_btn.config(state=tk.NORMAL)
         done = sum(1 for i in self.queue if i.status == "✓ Done")
         errors = sum(1 for i in self.queue if i.status == "✗ Error")
