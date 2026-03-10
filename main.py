@@ -14,7 +14,7 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime
 
-VERSION = "1.1.2"
+VERSION = "1.1.3"
 GITHUB_REPO = "jotoltd/YTMP3DL"
 
 # Resolve ffmpeg location: PyInstaller bundle OR local ffmpeg\bin folder
@@ -430,6 +430,7 @@ class YouTubeMP3Downloader(tk.Tk):
         self._player_duration_ms = 0
         self._player_update_id = None
 
+        self._cleanup_old_exe()
         self._build_ui()
         self._init_audio()
         self._apply_theme()
@@ -946,6 +947,16 @@ class YouTubeMP3Downloader(tk.Tk):
         self._update_btn.config(state=tk.DISABLED, text="⏳  Downloading...")
         threading.Thread(target=self._download_and_replace, daemon=True).start()
 
+    def _cleanup_old_exe(self):
+        if not getattr(sys, "frozen", False):
+            return
+        try:
+            old = sys.executable + ".old"
+            if os.path.exists(old):
+                os.remove(old)
+        except Exception:
+            pass
+
     def _download_and_replace(self):
         try:
             dl_url = self._update_available["url"]
@@ -963,30 +974,42 @@ class YouTubeMP3Downloader(tk.Tk):
             if os.path.getsize(tmp_exe) < 500_000:
                 raise Exception("Download appears corrupted (file too small).")
 
-            self._update_status("Restarting to apply update...")
+            self._update_status("Installing update...")
 
-            vbs = (
-                'Set sh  = CreateObject("WScript.Shell")\n'
-                'Set fso = CreateObject("Scripting.FileSystemObject")\n'
-                'WScript.Sleep 4000\n'
-                'On Error Resume Next\n'
-                f'fso.CopyFile "{tmp_exe}", "{current_exe}", True\n'
-                'If Err.Number = 0 Then\n'
-                f'    sh.Run Chr(34) & "{current_exe}" & Chr(34), 1, False\n'
-                'Else\n'
-                f'    sh.Run "https://github.com/{GITHUB_REPO}/releases/latest", 1, False\n'
-                'End If\n'
-            )
-            helper = os.path.join(tmp_dir, "_updater.vbs")
-            with open(helper, "w", encoding="utf-8") as f:
-                f.write(vbs)
+            backup_exe = current_exe + ".old"
 
+            # Remove stale backup if present
+            try:
+                if os.path.exists(backup_exe):
+                    os.remove(backup_exe)
+            except Exception:
+                pass
+
+            # Rename the running exe — Windows allows this via FILE_SHARE_DELETE.
+            # The process keeps running because it holds an internal handle to the
+            # original file object, not to the path.
+            os.rename(current_exe, backup_exe)
+
+            try:
+                # Copy the downloaded exe to the now-vacant original path.
+                # This creates a brand-new file; no write-lock issue.
+                shutil.copy2(tmp_exe, current_exe)
+            except Exception as copy_err:
+                # Restore original if copy failed
+                try:
+                    os.rename(backup_exe, current_exe)
+                except Exception:
+                    pass
+                raise copy_err
+
+            # Launch the new exe and exit this one
             subprocess.Popen(
-                ["wscript", "//Nologo", helper],
+                [current_exe],
                 creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW,
                 close_fds=True,
             )
-            self.after(1000, lambda: os._exit(0))
+            self.after(500, lambda: os._exit(0))
+
         except Exception as e:
             self._log(f"Update failed: {e}")
             self.after(0, lambda: self._update_btn.config(state=tk.NORMAL, text="⬇  Install Update"))
