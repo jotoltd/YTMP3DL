@@ -14,7 +14,7 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 GITHUB_REPO = "jotoltd/YTMP3DL"
 
 # Resolve ffmpeg location: PyInstaller bundle OR local ffmpeg\bin folder
@@ -813,29 +813,30 @@ class YouTubeMP3Downloader(tk.Tk):
             if os.path.getsize(tmp_exe) < 500_000:
                 raise Exception("Download appears corrupted (file too small).")
 
-            self._update_status("Preparing to install update...")
+            self._update_status("Restarting to apply update...")
 
-            ps = (
-                f'Start-Sleep -Seconds 3\n'
-                f'try {{\n'
-                f'  Copy-Item -LiteralPath "{tmp_exe}" -Destination "{current_exe}" -Force -ErrorAction Stop\n'
-                f'  Start-Process -FilePath "{current_exe}"\n'
-                f'}} catch {{\n'
-                f'  Start-Process -FilePath "https://github.com/{GITHUB_REPO}/releases/latest"\n'
-                f'}}\n'
-                f'try {{ Remove-Item -LiteralPath "{tmp_exe}" -Force }} catch {{}}\n'
+            vbs = (
+                'Set sh  = CreateObject("WScript.Shell")\n'
+                'Set fso = CreateObject("Scripting.FileSystemObject")\n'
+                'WScript.Sleep 4000\n'
+                'On Error Resume Next\n'
+                f'fso.CopyFile "{tmp_exe}", "{current_exe}", True\n'
+                'If Err.Number = 0 Then\n'
+                f'    sh.Run Chr(34) & "{current_exe}" & Chr(34), 1, False\n'
+                'Else\n'
+                f'    sh.Run "https://github.com/{GITHUB_REPO}/releases/latest", 1, False\n'
+                'End If\n'
             )
-            helper = os.path.join(tmp_dir, "_updater.ps1")
+            helper = os.path.join(tmp_dir, "_updater.vbs")
             with open(helper, "w", encoding="utf-8") as f:
-                f.write(ps)
+                f.write(vbs)
 
             subprocess.Popen(
-                ["powershell", "-ExecutionPolicy", "Bypass",
-                 "-WindowStyle", "Hidden", "-File", helper],
+                ["wscript", "//Nologo", helper],
                 creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW,
                 close_fds=True,
             )
-            self.after(500, self.destroy)
+            self.after(1000, lambda: os._exit(0))
         except Exception as e:
             self._log(f"Update failed: {e}")
             self.after(0, lambda: self._update_btn.config(state=tk.NORMAL, text="⬇  Install Update"))
